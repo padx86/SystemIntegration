@@ -15,8 +15,11 @@ import cv2
 import yaml
 from scipy.spatial import KDTree
 
+# See a constant tl state for at least three frames before taking action
 STATE_COUNT_THRESHOLD = 3
-IMG_TIMEOUT = 2.0 # time in seconds before has_img is switched to 0
+
+# time in seconds before has_img is switched to 0
+IMG_TIMEOUT = 2.0 
 
 DEBUG_ON = False
 
@@ -41,15 +44,17 @@ class TLDetector(object):
         self.last_wp = -1
         self.state_count = 0
 
+        # Create subscribers
         sub1 = rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
-
         sub3 = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_cb)
         sub6 = rospy.Subscriber('/image_color', Image, self.image_cb)
 
+        # Get Traffic light config
         config_string = rospy.get_param("/traffic_light_config")
         self.config = yaml.load(config_string)
 
+        # Publisher for upcoming red lights
         self.upcoming_red_light_pub = rospy.Publisher('/traffic_waypoint', Int32, queue_size=1)
 
         if DEBUG_ON:
@@ -58,7 +63,7 @@ class TLDetector(object):
         self.loop()
 
     def loop(self):
-
+        # Process traffic light detection with 10 Hz
         rate = rospy.Rate(10)
 
         while not rospy.is_shutdown():
@@ -77,18 +82,22 @@ class TLDetector(object):
             rate.sleep()
 
     def pose_cb(self, msg):
+        # /current_pose callback - store pose
         self.pose = msg
 
     def waypoints_cb(self, waypoints):
+        # /base_waypoints callback - store and create KDTree
         self.waypoints = waypoints
         if self.waypoint_tree is None:
             waypoints = [[wp.pose.pose.position.x, wp.pose.pose.position.y] for wp in waypoints.waypoints]
             self.waypoint_tree = KDTree(waypoints)
 
     def traffic_cb(self, msg):
+        # /vehicle/traffic_lights callback
         self.lights = msg.lights
 
     def image_cb(self, msg):
+        # /image_color callback store image and switch state to img recieved
         if not self.has_image:
             rospy.logwarn('Recieved first image, switching traffic light recognition to image analysis')
         self.has_image = True
@@ -99,17 +108,19 @@ class TLDetector(object):
         
         return self.waypoint_tree.query([x,y],1)[1]
 
-    def get_light_state(self, light):        
+    def get_light_state(self, light):  
+        # get state of specific traffic light
         if self.has_image:
-            #cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
-            ## Get classification
+            ### No classifier implemented ###
+            # cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
+            ## Get classification from image
             #return self.light_classifier.get_classification(cv_image)
             return False
         else:
             return light.state
 
     def process_traffic_lights(self):
-        
+        # return closest traffic light and distance to its stopline
         closest_tl = None
         line_wp_idx = None
 
@@ -117,14 +128,14 @@ class TLDetector(object):
             self.has_image = False
             rospy.logwarn("No further images recieved from camera, using traffic light state provided by Simulation")
 
-        
-
         # List of positions that correspond to the line to stop in front of for a given intersection
         stop_line_positions = self.config['stop_line_positions']
         if(self.pose and self.waypoint_tree and self.waypoints):
+            #Get closest waypoint
             car_wp_index = self.get_closest_waypoint(x=self.pose.pose.position.x,y=self.pose.pose.position.y)
-
             n_waypoints = len(self.waypoints.waypoints)
+            
+            #Look for next light
             for i, light in enumerate(self.lights):
                 tl_wp_index = self.get_closest_waypoint(stop_line_positions[i][0], stop_line_positions[i][1])
                 n_wp_to_stopline = tl_wp_index - car_wp_index
@@ -133,11 +144,9 @@ class TLDetector(object):
                     closest_tl = light
                     line_wp_idx = tl_wp_index
         if closest_tl:
-            
             state = self.get_light_state(light)
             if DEBUG_ON:
-                rospy.loginfo('Next Traffic Light in: ' + str(n_waypoints) + ' waypoints with state: ' + self.tlmap[state])
-
+                rospy.logwarn('Next Traffic Light in: ' + str(n_waypoints) + ' waypoints with state: ' + self.tlmap[state])
             return line_wp_idx, state
 
         return -1, TrafficLight.UNKNOWN

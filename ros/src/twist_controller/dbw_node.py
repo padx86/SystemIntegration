@@ -30,11 +30,14 @@ Once you have the proposed throttle, brake, and steer values, publish it on the 
 that we have created in the `__init__` function.
 
 '''
+DEBUG_ON = False
 
 class DBWNode(object):
     def __init__(self):
+        # Initialize node
         rospy.init_node('dbw_node')
 
+        # Get vehicle parameters
         vehicle_mass = rospy.get_param('~vehicle_mass', 1736.35)
         fuel_capacity = rospy.get_param('~fuel_capacity', 13.5)
         brake_deadband = rospy.get_param('~brake_deadband', .1)
@@ -46,17 +49,13 @@ class DBWNode(object):
         max_lat_accel = rospy.get_param('~max_lat_accel', 3.)
         max_steer_angle = rospy.get_param('~max_steer_angle', 8.)
 
+        # Create publishers
         self.steer_pub = rospy.Publisher('/vehicle/steering_cmd', SteeringCmd, queue_size=1)
         self.throttle_pub = rospy.Publisher('/vehicle/throttle_cmd', ThrottleCmd, queue_size=1)
         self.brake_pub = rospy.Publisher('/vehicle/brake_cmd', BrakeCmd, queue_size=1)
 
         # Create `Controller` object
         self.controller = Controller(vehicle_mass, brake_deadband, decel_limit, accel_limit, wheel_radius, wheel_base, steer_ratio, max_lat_accel, max_steer_angle)
-
-        # Subscribe to all the topics you need to
-        rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_cb)
-        rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.dbw_cb)
-        rospy.Subscriber('/current_velocity', TwistStamped, self.cur_velocity_cb)
 
         self.cur_longitudinal_velocity = None
         self.cur_angular_velocity = None
@@ -67,9 +66,12 @@ class DBWNode(object):
         self.steering = 0.0
         self.braking = 0.0
 
-        self.loop()
+        # Subscribe to all the topics you need to
+        rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_cb)
+        rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.dbw_cb)
+        rospy.Subscriber('/current_velocity', TwistStamped, self.cur_velocity_cb)
 
-        
+        self.loop()
 
     def loop(self):
         rate = rospy.Rate(50) # 50Hz
@@ -77,7 +79,8 @@ class DBWNode(object):
             if not None in (self.cur_longitudinal_velocity, self.cur_angular_velocity, self.longitudinal_velocity ,self.angular_velocity, self.dbw_enabled):
                 if self.dbw_enabled:
                     self.throttle, self.braking, self.steering = self.controller.control(self.cur_longitudinal_velocity, self.cur_angular_velocity, self.longitudinal_velocity,self.angular_velocity)
-                    # rospy.logwarn('Throttle: ' + str(self.throttle) + '  brake: ' + str(self.braking))
+                    if DEBUG_ON:
+                        rospy.logwarn('Throttle: ' + str(self.throttle) + '  brake: ' + str(self.braking))
                     self.publish(self.throttle, self.braking, self.steering)
                 else:
                     self.throttle = 0.0
@@ -100,17 +103,21 @@ class DBWNode(object):
         self.dbw_enabled = msg;     # Store drive by wire state to instance
 
     def publish(self, throttle, brake, steer):
+        
+        # Create and publish throttle msg
         tcmd = ThrottleCmd()
         tcmd.enable = True
         tcmd.pedal_cmd_type = ThrottleCmd.CMD_PERCENT
         tcmd.pedal_cmd = throttle
         self.throttle_pub.publish(tcmd)
 
+        # Create and publish steering msg
         scmd = SteeringCmd()
         scmd.enable = True
         scmd.steering_wheel_angle_cmd = steer
         self.steer_pub.publish(scmd)
 
+        # Create and publish brake msg
         bcmd = BrakeCmd()
         bcmd.enable = True
         bcmd.pedal_cmd_type = BrakeCmd.CMD_TORQUE

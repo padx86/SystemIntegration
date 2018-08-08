@@ -16,24 +16,27 @@ STATE_DRIVING = 2
 
 class Controller(object):
     def __init__(self, vehicle_mass, brake_deadband, decel_limit, accel_limit, wheel_radius, wheel_base, steer_ratio, max_lat_accel, max_steer_angle):
-        # TODO: Implement
+        # Accelaration controller - use for braking as well(mn=-1.0)
+        self.accelaration_controller = PID(kp=0.5, ki=0.05, kd=0.1, mn=-1.0, mx=0.5)   
         
-        self.accelaration_controller = PID(kp=0.3, ki=0.1, kd=0.1, mn=-1.0, mx=0.5)
-        self.yaw_controller = YawController(wheel_base=wheel_base, steer_ratio=steer_ratio, min_speed=0.05, max_lat_accel=max_lat_accel, max_steer_angle=max_steer_angle)
-        self.lpfilter = LowPassFilter(tau=0.5,ts=0.02)
+        # Yaw Controller
+        self.yaw_controller = YawController(wheel_base=wheel_base, steer_ratio=steer_ratio, min_speed=0.25, max_lat_accel=max_lat_accel, max_steer_angle=max_steer_angle) 
+
+        # Lowpass filter for filtering velocity retrieved by simulator
+        self.lpfilter = LowPassFilter(tau=0.5,ts=0.5) 
         
+        # Store parameters
         self.decel_limit = decel_limit
         self.wheel_radius = wheel_radius
         self.vehicle_mass = vehicle_mass
 
-        self.last_state = STATE_STOPPED
-        self.last_time = rospy.get_time()
+        self.last_state = STATE_STOPPED     # Define State
+        self.last_time = rospy.get_time()   # Define previous time stamp
+
         if DEBUG_ON:
             rospy.logwarn('Controller Initiated')
 
     def control(self, cur_longitudinal_velocity, cur_angular_velocity, longitudinal_velocity, angular_velocity):
-        # TODO: Change the arg, kwarg list to suit your needs
-        # Return throttle, brake, steer
         
         # Initialize output
         throttle = 0.0
@@ -49,15 +52,15 @@ class Controller(object):
         cur_velocity = self.lpfilter.filt(cur_longitudinal_velocity)
 
         # Get steering from yaw controller
-        steering = self.yaw_controller.get_steering(longitudinal_velocity,angular_velocity,cur_velocity)
+        steering = self.yaw_controller.get_steering(longitudinal_velocity, angular_velocity, cur_velocity)
 
         # Get throttle from PID Controller
         pid_err = longitudinal_velocity - cur_velocity
         throttle = self.accelaration_controller.step(pid_err, sample_time)
 
-        #Map throtlle to brake
+        # Map throtlle to brake if below zero
         if throttle < 0:
-            braking = 0.33* abs(throttle) * self.vehicle_mass * self.wheel_radius
+            braking = 0.8* abs(throttle) * self.vehicle_mass * self.wheel_radius
             throttle = 0
 
         # Renew State
@@ -76,7 +79,7 @@ class Controller(object):
                     rospy.logwarn('State transition ---- new state: DRIVING' )
 
         
-        #Store current state
+        # Store current state
         self.last_state = state
         
         return throttle, braking, steering

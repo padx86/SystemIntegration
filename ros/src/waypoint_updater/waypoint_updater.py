@@ -45,7 +45,7 @@ class WaypointUpdater(object):
         self.previous_closest_waypoint_index = -1         
         self.previous_velocitys = []
         self.STATE_DECELARATING = False
-
+        self.decelaration = 0.0
         # Trafficlights
         self.stopline_wp_index = None
 
@@ -91,52 +91,54 @@ class WaypointUpdater(object):
         
     def generate_tl_wp(self,closest_waypoint_index):
         # Returns msg of type Lane if traffic lights should be taken into consideration
+
         # Create Message
         msg = Lane()
         msg.header = self.base_waypoints.header
 
+        # Get next LOOKAHEAD_WPS
         last_waypoint_index = closest_waypoint_index + LOOKAHEAD_WPS
         waypoints = self.base_waypoints.waypoints[closest_waypoint_index:last_waypoint_index]
 
         if self.stopline_wp_index == -1 or last_waypoint_index <= self.stopline_wp_index:
+            # Stopline to far, behind vehicle or traffic light state not red
             msg.waypoints = waypoints
             self.STATE_DECELARATING = False
         else:
-            stop_index = self.stopline_wp_index - closest_waypoint_index # Index to stop at
-            if self.STATE_DECELARATING:
-                waypoints_passed = closest_waypoint_index - self.previous_closest_waypoint_index
-                if DEBUG_ON:
-                    rospy.loginfo('Passed ' + str(waypoints_passed) + ' waypoints')
-                if waypoints_passed < 0:
-                    waypoints_passed = 0
-                initial_velocity = self.previous_velocitys[waypoints_passed]
-            else:
+            # Index of stop line relative to closest waypoint
+            stop_index = self.stopline_wp_index - closest_waypoint_index 
+            
+            # Calculate linear decelaration for first entering stop light detection progress
+            if self.STATE_DECELARATING == False:
                 initial_velocity = waypoints[0].twist.twist.linear.x
-            
-            # total_dist = self.distance(waypoints,0,stop_index)
-            
-            if stop_index > 0:
-                decelaration = initial_velocity/stop_index #Deceleration per waypoint
+                if stop_index > 10:
+                    # Deceleration per waypoint if stop line more than 10 Waypoints ahead at first detection as no "Yellow-Detection" implemented
+                    self.decelaration = initial_velocity/(stop_index-1) 
+                else:
+                    # Do not decelarate if red light appears during car is to close
+                    self.decelaration = 0
             else:
-                decelaration = 1.0
-
+                # Get decelarating initial velocity at closest waypoint
+                initial_velocity = self.previous_velocitys[closest_waypoint_index-self.previous_closest_waypoint_index]
+            
+            # Clear previously stored velocities and create waypoints list
             decleration_waypoints = []
             self.previous_velocitys = []
             
+            # Generate waypoitns
             for i, wp in enumerate(waypoints):
                 p = Waypoint()
                 p.pose = wp.pose
-                decelaration_velocity = initial_velocity - decelaration*(i+1)
-                if decelaration_velocity < 1:
-                    decelaration_velocity = 0.
+                decelaration_velocity = initial_velocity - self.decelaration*i
+                if decelaration_velocity < 1.0:
+                    decelaration_velocity = 0.0
                 p.twist.twist.linear.x = decelaration_velocity
                 self.previous_velocitys.append(decelaration_velocity)
                 decleration_waypoints.append(p)
             msg.waypoints = decleration_waypoints
             self.STATE_DECELARATING = True
-            if DEBUG_ON:
-                rospy.loginfo('Decelaration of waypoint at stop_index: ' + str(decleration_waypoints[stop_index].twist.twist.linear.x))
         self.previous_closest_waypoint_index = closest_waypoint_index
+
         return msg
 
     ## Callbacks
@@ -161,9 +163,13 @@ class WaypointUpdater(object):
     def get_closest_waypoint_index(self):
         # returns closest waypoint from KDTree
         if self.waypoint_tree is not None:
-            closest_idx = self.waypoint_tree.query([self.car_x, self.car_y],1)[1]+1
+            closest_idx = self.waypoint_tree.query([self.car_x, self.car_y],1)[1]
+            wp_angle = math.atan2((self.base_waypoints.waypoints[closest_idx].pose.pose.position.y-self.car_y),(self.base_waypoints.waypoints[closest_idx].pose.pose.position.x-self.car_x))
+            diff_angle = abs(self.car_yaw - wp_angle)
+            if (diff_angle > (math.pi / 4)):
+                closest_idx = closest_idx + 1
         else:
-            rospy.logwarn('KDTree has not initialized yet')
+            rospy.logwarn('KDTree has not been initialized yet')
             closest_idx = 0
 
         return closest_idx
